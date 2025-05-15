@@ -1,26 +1,23 @@
 """
-Streamlit应用入口：巡航速度分析工具
+Streamlit application entry: Cruising Speed Analysis Tool
 """
 
-import io
-import tempfile
 from datetime import datetime
+from parser import FitParser
 
 import pandas as pd
-import streamlit as st
 import plotly.express as px
+import streamlit as st
 
 import config
+import visualization
 from compute import create_calculator
 from models import RideData
-from parser import FitParser
 from preprocess import PreProcessingPipeline
-import visualization
 
-
-# 设置页面配置
+# Set page configuration
 st.set_page_config(
-    page_title="巡航速度分析工具",
+    page_title="Cruising Speed Analysis Tool",
     page_icon="🚴‍♂️",
     layout="wide"
 )
@@ -28,190 +25,267 @@ st.set_page_config(
 
 def process_uploaded_file(uploaded_file, user_config):
     """
-    处理上传的FIT文件并计算巡航速度
-    
+    Process the uploaded FIT file and calculate cruising speed
+
     Args:
-        uploaded_file: 上传的文件对象
-        user_config: 用户自定义配置
-        
+        uploaded_file: Uploaded file object
+        user_config: User-defined configuration
+
     Returns:
-        tuple: (结果字典, 处理后的DataFrame)
+        tuple: (results dictionary, processed DataFrame)
     """
     try:
-        # 读取上传的文件数据
+        # Read uploaded file data
         bytes_data = uploaded_file.getvalue()
-        
-        # 解析FIT数据
+
+        # Parse FIT data
         parser = FitParser()
         ride_data = parser.parse_bytes(bytes_data)
-        
+
         if ride_data is None:
-            return {"success": False, "message": "无法解析FIT文件数据"}, None
-        
-        # 显示原始数据点数量
-        st.info(f"原始数据点数量: {len(ride_data.records)}")
-        
-        # 合并配置
+            return {"success": False, "message": "Failed to parse FIT file data"}, None
+
+        # Display original data point count
+        st.info(f"Original data points: {len(ride_data.records)}")
+
+        # Merge configurations
         conf = config.merge_config(
             config.get_default_config(),
             user_config
         )
-        
-        # 预处理数据
+
+        # Preprocess data
         pipeline = PreProcessingPipeline.create_default_pipeline()
         processed_data = pipeline.process(ride_data, conf)
+
+        # Calculate cruising speed
+        cruising_calculator = create_calculator('cruising_speed', conf)
+        cruising_result = cruising_calculator.calculate(processed_data)
         
-        # 计算巡航速度
-        calculator = create_calculator('cruising_speed', conf)
-        result = calculator.calculate(processed_data)
+        # Calculate normalized power if configuration available
+        np_calculator = create_calculator('normalized_power', conf)
+        np_result = np_calculator.calculate(processed_data)
         
-        # 转换为DataFrame以便可视化
+        # Merge results
+        result = {**cruising_result}
+        
+        # Only merge NP results if they were successful
+        if np_result.get('success', False):
+            result.update({
+                'normalized_power': np_result.get('normalized_power'),
+                'intensity_factor': np_result.get('intensity_factor'),
+                'np_to_avg_ratio': np_result.get('np_to_avg_ratio'),
+            })
+
+        # Convert to DataFrame for visualization
         df = processed_data.to_dataframe()
-        
+
         return result, df
-        
+
     except Exception as e:
-        st.error(f"处理文件时出错: {str(e)}")
-        return {"success": False, "message": f"处理出错: {str(e)}"}, None
+        st.error(f"Error processing file: {str(e)}")
+        return {"success": False, "message": f"Processing error: {str(e)}"}, None
 
 
 def show_results(result, df):
     """
-    显示计算结果和可视化图表
-    
+    Display calculation results and visualizations
+
     Args:
-        result: 计算结果字典
-        df: 处理后的DataFrame
+        result: Calculation results dictionary
+        df: Processed DataFrame
     """
     if not result['success']:
-        st.error(f"计算失败: {result.get('message', '未知错误')}")
+        st.error(f"Calculation failed: {result.get('message', 'Unknown error')}")
         return
     
-    # 显示主要结果
-    st.success(f"### 巡航速度: {result['cruising_speed']:.2f} km/h")
+    # Create tabs for different types of analysis
+    tab1, tab2 = st.tabs(["Speed Analysis", "Power Analysis"])
     
-    # 显示其他指标
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("平均速度", f"{result.get('avg_speed', 0):.2f} km/h")
-    if 'avg_power' in result:
-        with col2:
-            st.metric("平均功率", f"{result['avg_power']:.2f} W")
-    if 'avg_cadence' in result:
-        with col3:
-            st.metric("平均踏频", f"{result['avg_cadence']:.2f} rpm")
-    
-    # 显示骑行概览
-    st.subheader("骑行概览")
-    summary_chart = visualization.create_summary_charts(df, result)
-    st.plotly_chart(summary_chart, use_container_width=True)
-    
-    # 显示图表
-    st.subheader("速度曲线")
-    speed_chart = visualization.create_speed_time_chart(df)
-    st.plotly_chart(speed_chart, use_container_width=True)
-    
-    st.subheader("速度分布")
-    dist_chart = visualization.create_speed_distribution(df)
-    st.plotly_chart(dist_chart, use_container_width=True)
-    
-    # 提供数据下载选项
-    if st.button("导出处理后的数据"):
-        csv_data = df.to_csv(index=False)
-        st.download_button(
-            label="下载CSV",
-            data=csv_data,
-            file_name=f"cruising_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-        )
+    with tab1:
+        # Display main result
+        st.success(f"### Cruising Speed: {result['cruising_speed']:.2f} km/h")
 
+        # Display other metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Average Speed", f"{result.get('avg_speed', 0):.2f} km/h")
+        if 'avg_power' in result:
+            with col2:
+                st.metric("Average Power", f"{result['avg_power']:.2f} W")
+        if 'avg_cadence' in result:
+            with col3:
+                st.metric("Average Cadence", f"{result['avg_cadence']:.2f} rpm")
+
+        # Display ride overview
+        st.subheader("Ride Overview")
+        summary_chart = visualization.create_summary_charts(df, result)
+        st.plotly_chart(summary_chart, use_container_width=True)
+
+        # Display charts
+        st.subheader("Speed Timeline")
+        speed_chart = visualization.create_speed_time_chart(df)
+        st.plotly_chart(speed_chart, use_container_width=True)
+
+        st.subheader("Speed Distribution")
+        dist_chart = visualization.create_speed_distribution(df)
+        st.plotly_chart(dist_chart, use_container_width=True)
+    
+    with tab2:
+        # Display normalized power results
+        if result.get('normalized_power') is not None:
+            st.success(f"### Normalized Power (NP): {result['normalized_power']:.0f} W")
+            
+            # Display power metrics
+            cols = st.columns(3)
+            with cols[0]:
+                st.metric("Average Power", f"{result.get('avg_power', 0):.0f} W")
+            with cols[1]:
+                st.metric("NP/Avg Ratio", f"{result.get('np_to_avg_ratio', 0):.2f}")
+            with cols[2]:
+                if result.get('intensity_factor') is not None:
+                    st.metric("Intensity Factor (IF)", f"{result['intensity_factor']:.2f}")
+            
+            # Display power charts
+            st.subheader("Power Analysis")
+            power_chart = visualization.create_power_analysis_chart(df, result)
+            st.plotly_chart(power_chart, use_container_width=True)
+            
+            st.subheader("Power Distribution")
+            power_dist_chart = visualization.create_power_distribution(df, result)
+            st.plotly_chart(power_dist_chart, use_container_width=True)
+        else:
+            st.warning("No power data detected. Normalized Power cannot be calculated.")
 
 def main():
-    """主函数：Streamlit应用入口"""
-    st.title("🚴‍♂️ 巡航速度分析工具")
-    
+    """Main function: Streamlit application entry point"""
+    st.title("🚴‍♂️ Cruising Speed Analysis Tool")
+
     st.write("""
-    此工具可分析骑行数据并计算巡航速度。上传您的FIT文件并调整参数以获得结果。
+    This tool analyzes cycling data and calculates cruising speed. Upload your FIT file and adjust parameters to get results.
     """)
-    
-    # 侧边栏：参数设置
+
+    # Sidebar: Parameter settings
     with st.sidebar:
-        st.header("参数设置")
+        st.header("Parameters")
+
+        # Add tabs for different parameter categories
+        param_tab1, param_tab2 = st.tabs(["Speed Analysis", "Power Analysis"])
         
-        # 基本参数
-        st.subheader("基本参数")
-        stop_speed = st.slider(
-            "停止速度阈值 (km/h)", 
-            min_value=0.5, 
-            max_value=5.0, 
-            value=config.STOP_SPEED_THRESHOLD_KMH,
-            help="低于此速度被视为可能停止"
-        )
-        
-        min_cruising_speed = st.slider(
-            "最小巡航速度 (km/h)", 
-            min_value=5.0, 
-            max_value=20.0, 
-            value=config.MIN_CRUISING_SPEED_KMH,
-            help="低于此速度的数据点将不被视为巡航"
-        )
-        
-        accel_threshold = st.slider(
-            "加速度阈值 (m/s²)", 
-            min_value=0.5, 
-            max_value=3.0, 
-            value=config.ACCELERATION_THRESHOLD_MPS2,
-            help="超过此加速度的点不被视为巡航"
-        )
-        
-        # 高级参数（可折叠）
-        with st.expander("高级参数"):
-            stop_duration = st.slider(
-                "停止持续时间 (秒)", 
-                min_value=1, 
-                max_value=10, 
-                value=config.STOP_DURATION_SECONDS,
-                help="持续停止多久才算一次有效停止"
+        with param_tab1:
+            # Basic speed parameters
+            st.subheader("Basic Parameters")
+            stop_speed = st.slider(
+                "Stop Speed Threshold (km/h)",
+                min_value=0.0,
+                max_value=20.0,
+                value=config.STOP_SPEED_THRESHOLD_KMH,
+                help="Speed below this is considered a potential stop"
+            )
+
+            min_cruising_speed = st.slider(
+                "Minimum Cruising Speed (km/h)",
+                min_value=5.0,
+                max_value=70.0,
+                value=config.MIN_CRUISING_SPEED_KMH,
+                help="Data points below this speed won't be considered cruising"
+            )
+
+            accel_threshold = st.slider(
+                "Acceleration Threshold (m/s²)",
+                min_value=0.5,
+                max_value=3.0,
+                value=config.ACCELERATION_THRESHOLD_MPS2,
+                help="Points exceeding this acceleration won't be considered cruising"
+            )
+
+            # Advanced speed parameters (collapsible)
+            with st.expander("Advanced Speed Parameters"):
+                stop_duration = st.slider(
+                    "Stop Duration (sec)",
+                    min_value=1,
+                    max_value=10,
+                    value=config.STOP_DURATION_SECONDS,
+                    help="How long a stop needs to last to be considered valid"
+                )
+
+                rolling_window = st.slider(
+                    "Rolling Window Size (sec)",
+                    min_value=1,
+                    max_value=10,
+                    value=config.ROLLING_WINDOW_SPEED_STD,
+                    help="Window size for calculating speed standard deviation"
+                )
+
+                std_dev_factor = st.slider(
+                    "Speed StdDev Threshold Factor",
+                    min_value=0.5,
+                    max_value=3.0,
+                    value=config.SPEED_STD_DEV_THRESHOLD_FACTOR,
+                    help="Factor for determining when speed variation is non-cruising"
+                )
+                
+        with param_tab2:
+            # Power analysis parameters
+            st.subheader("Power Analysis Parameters")
+            
+            np_window = st.slider(
+                "NP Window Size (seconds)",
+                min_value=10,
+                max_value=60,
+                value=config.NP_WINDOW_SIZE_SECONDS,
+                help="Moving average window size for normalized power calculation"
             )
             
-            rolling_window = st.slider(
-                "滚动窗口大小 (秒)", 
-                min_value=1, 
-                max_value=10, 
-                value=config.ROLLING_WINDOW_SPEED_STD,
-                help="计算速度标准差的窗口大小"
+            ftp = st.number_input(
+                "Functional Threshold Power (FTP)",
+                min_value=0,
+                value=0,
+                help="Set your FTP to calculate Intensity Factor (IF), leave at 0 to skip"
             )
             
-            std_dev_factor = st.slider(
-                "速度标准差阈值因子", 
-                min_value=0.5, 
-                max_value=3.0, 
-                value=config.SPEED_STD_DEV_THRESHOLD_FACTOR,
-                help="速度波动判定为非巡航的因子"
-            )
-        
-        # 收集用户配置
+            # Advanced power parameters
+            with st.expander("Advanced Power Parameters"):
+                max_power = st.slider(
+                    "Maximum Power Threshold (W)",
+                    min_value=1000,
+                    max_value=5000,
+                    value=config.MAX_POWER_THRESHOLD,
+                    help="Power values above this threshold will be treated as errors"
+                )
+                
+                interpolate_gaps = st.checkbox(
+                    "Interpolate Power Gaps",
+                    value=True,
+                    help="Automatically fill small gaps in power data"
+                )
+                
+        # Collect user configuration
         user_config = {
             'stop_speed_threshold_kmh': stop_speed,
             'min_cruising_speed_kmh': min_cruising_speed,
             'acceleration_threshold_mps2': accel_threshold,
             'stop_duration_seconds': stop_duration,
             'rolling_window_speed_std': rolling_window,
-            'speed_std_dev_threshold_factor': std_dev_factor
+            'speed_std_dev_threshold_factor': std_dev_factor,
+            'np_window_size_seconds': np_window,
+            'ftp': ftp if ftp > 0 else None,
+            'max_power_threshold': max_power,
+            'interpolate_power_gaps': interpolate_gaps
         }
-    
-    # 主区域：文件上传和结果显示
-    uploaded_file = st.file_uploader("上传FIT文件", type=['fit'])
-    
+
+    # Main area: File upload and results display
+    uploaded_file = st.file_uploader("Upload FIT File", type=['fit'])
+
     if uploaded_file is not None:
-        # 分析按钮
-        if st.button("分析骑行数据"):
-            with st.spinner('处理数据中...'):
-                # 处理文件
+        # Analyze button
+        if st.button("Analyze Ride Data"):
+            with st.spinner('Processing data...'):
+                # Process file
                 result, df = process_uploaded_file(uploaded_file, user_config)
-                
+
                 if df is not None:
-                    # 显示结果
+                    # Display results
                     show_results(result, df)
 
 
