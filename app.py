@@ -2,11 +2,8 @@
 Streamlit application entry: Cruising Speed Analysis Tool
 """
 
-from datetime import datetime
 from parser import FitParser
 
-import pandas as pd
-import plotly.express as px
 import streamlit as st
 
 import config
