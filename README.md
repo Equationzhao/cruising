@@ -24,20 +24,11 @@
 - **功率分析参数**：NP 窗口大小、FTP 设置
 - **高级功率参数**：最大功率阈值、功率数据插值设置
 
-### 安装步骤
+## streamlit app
 
-1. 克隆仓库
-```bash
-git clone https://github.com/Equationzhao/cruising.git
-cd cruising
-```
+https://equationzhao-cruising-app-i2qvuo.streamlit.app/
 
-2. 安装依赖
-```bash
-pip install -r requirements.txt
-```
-
-## 使用
+## 本地使用
 
 1. 启动应用程序
 ```bash
